@@ -5,7 +5,6 @@
 #include <shlwapi.h>
 #include <shlobj.h>
 #include <winhttp.h>
-#include <wincrypt.h>
 
 using namespace Gdiplus;
 
@@ -16,7 +15,7 @@ static HWND g_hwnd = nullptr;
 static float g_dpi = 1.0f;
 static Bitmap* g_logo = nullptr;
 
-struct Comp { wstring name, file, sha, desc; long size = 0; bool sel = true; };
+struct Comp { wstring name, file, desc; long size = 0; bool sel = true; };
 static vector<Comp> g_comps;
 static bool g_mLoading = false, g_mError = false;
 static wstring g_mErrText;
@@ -62,8 +61,7 @@ static bool HttpGet(const wstring& url, std::function<bool(const BYTE*, DWORD)> 
     HINTERNET hs = WinHttpOpen(L"MagicToolSetup/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
                                WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!hs) return false;
-    DWORD toR = 30000, toS = 30000, toW = 30000, toC = 30000;
-    WinHttpSetTimeouts(hs, toR, toC, toS, toW);
+    WinHttpSetTimeouts(hs, 30000, 30000, 30000, 30000);
     bool ok = false;
     HINTERNET hc = WinHttpConnect(hs, u.host.c_str(), u.port, 0);
     if (hc) {
@@ -123,24 +121,6 @@ static bool HttpDownload(const wstring& url, const wstring& path,
     if (!ok) DeleteFileW(path.c_str());
     return ok;
 }
-static wstring Sha256File(const wstring& path) {
-    HANDLE f = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (f == INVALID_HANDLE_VALUE) return L"";
-    wstring out;
-    HCRYPTPROV prov = 0; HCRYPTHASH h = 0;
-    if (CryptAcquireContextW(&prov, nullptr, nullptr, PROV_RSA_AES, CRYPT_VERIFYCONTEXT)) {
-        if (CryptCreateHash(prov, CALG_SHA_256, 0, 0, &h)) {
-            BYTE buf[65536]; DWORD rd = 0;
-            while (ReadFile(f, buf, sizeof(buf), &rd, nullptr) && rd > 0) CryptHashData(h, buf, rd, 0);
-            BYTE d[32]; DWORD dl = sizeof(d);
-            if (CryptGetHashParam(h, HP_HASHVAL, d, &dl, 0)) out = HexBytes(d, dl);
-            CryptDestroyHash(h);
-        }
-        CryptReleaseContext(prov, 0);
-    }
-    CloseHandle(f);
-    return out;
-}
 
 static bool MakeShortcut(const wstring& lnk, const wstring& target, const wstring& desc, const wstring& workdir) {
     IShellLinkW* sl = nullptr;
@@ -197,14 +177,6 @@ static bool DoInstall(const wstring& dir, bool desk, bool start) {
         }, &g_cancel);
         if (!dok) { Log(L"ОШИБКА: не удалось скачать " + c.name + L" (проверьте интернет)"); return false; }
 
-        SetStat(L"Проверяю контрольную сумму…", -1.0f);
-        Log(L"Проверяю контрольную сумму…");
-        wstring got = Sha256File(part);
-        if (_wcsicmp(got.c_str(), c.sha.c_str()) != 0) {
-            DeleteFileW(part.c_str());
-            Log(L"ОШИБКА: контрольная сумма " + c.name + L" не совпала — файл повреждён или подменён");
-            return false;
-        }
         wstring dest = dir + L"\\" + c.file;
         DeleteFileW(dest.c_str());
         if (!MoveFileW(part.c_str(), dest.c_str())) { CopyFileW(part.c_str(), dest.c_str(), FALSE); DeleteFileW(part.c_str()); }
@@ -243,7 +215,6 @@ static bool DoInstall(const wstring& dir, bool desk, bool start) {
 static bool DoUninstall() {
     wstring dir = ExeDir();
     Log(L"Удаляю ярлыки…");
-
     HANDLE h = CreateFileW((dir + L"\\installed.txt").c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
     if (h != INVALID_HANDLE_VALUE) {
         std::string data; char buf[4096]; DWORD rd = 0;
@@ -284,9 +255,9 @@ static void LoadManifest() {
                 wstring t = Trim(line);
                 if (t.empty() || t[0] == L'#') continue;
                 auto f = Split(t, L'|');
-                if (f.size() >= 6) {
-                    Comp c; c.name = Trim(f[0]); c.file = Trim(f[1]); c.sha = Trim(f[2]);
-                    c.size = _wtol(f[3].c_str()); c.desc = Trim(f[4]); c.sel = Trim(f[5]) == L"1";
+                if (f.size() >= 5) {
+                    Comp c; c.name = Trim(f[0]); c.file = Trim(f[1]);
+                    c.size = _wtol(f[2].c_str()); c.desc = Trim(f[3]); c.sel = Trim(f[4]) == L"1";
                     comps->push_back(c); parsed = true;
                 }
             }
@@ -396,14 +367,8 @@ static float Body(float x, float y, float w) {
              RectF(x, y + 124, w, 20), FontUI(13), P.muted, T_CENTER | T_VCENTER);
         y += 164;
         float bw = 260, bx = x + (w - bw) / 2;
-        if (!g_uninst) {
-            Button(RectF(bx, y, bw, 42), L"Закрыть", [] { PostMessageW(g_hwnd, WM_CLOSE, 0, 0); }, Btn::Primary);
-            y += 52;
-        } else {
-            Button(RectF(bx, y, bw, 42), L"Закрыть", [] { PostMessageW(g_hwnd, WM_CLOSE, 0, 0); }, Btn::Secondary);
-            y += 52;
-        }
-        return y;
+        Button(RectF(bx, y, bw, 42), L"Закрыть", [] { PostMessageW(g_hwnd, WM_CLOSE, 0, 0); }, g_uninst ? Btn::Secondary : Btn::Primary);
+        return y + 52;
     }
     if (g_phase == 3) {
         y += Banner2(x, y, w, L"Не удалось завершить", L"Подробности в журнале ниже.");
@@ -411,7 +376,6 @@ static float Body(float x, float y, float w) {
         Button(RectF(x, y, 160, 42), L"Закрыть", [] { PostMessageW(g_hwnd, WM_CLOSE, 0, 0); }, Btn::Secondary);
         return y + 52;
     }
-
     if (g_uninst) {
         RectF r(x, y, w, 96);
         FillRound(r, 12, P.surface);
