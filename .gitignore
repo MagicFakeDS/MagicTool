@@ -1,0 +1,38 @@
+# Build artifacts
+*.exe
+*.dll
+*.obj
+*.o
+*.res
+*.pdb
+*.ilk
+*.lib
+*.exp
+bin/
+obj/
+src/obj/
+src/bin/
+
+# Local settings / secrets (never publish)
+settings.ini
+data/
+*.key
+rarreg.key
+
+# Third-party binaries that must NOT be redistributed
+# (drivers, WinPE images, bundled programs — download from official sources)
+WinInstaller/usb/
+WinInstaller/build/
+*.wim
+*.esd
+*.iso
+*.vhdx
+*.sys
+*.cat
+
+# OS / editor junk
+Thumbs.db
+desktop.ini
+.vs/
+.vscode/
+*.user
